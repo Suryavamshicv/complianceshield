@@ -37,7 +37,7 @@ export const analyzeProductImage = async (
     Return the data in strict JSON format.
   `;
 
-  const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error("GEMINI_API_KEY is not set. Create a .env.local with GEMINI_API_KEY and restart the dev server.");
   }
