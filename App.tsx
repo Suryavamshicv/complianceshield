@@ -1,0 +1,417 @@
+
+import React, { useState, useEffect } from 'react';
+import { TargetAudience, InventoryItem, DashboardStats, User, UserFeedback, HealthSensitivity } from './types';
+import { analyzeProductImage } from './services/geminiService';
+import { dbService } from './services/dbService';
+import { Scanner } from './components/Scanner';
+import { Dashboard } from './components/Dashboard';
+import { Auth } from './components/Auth';
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
+
+const FeedbackModal: React.FC<{ 
+  item: InventoryItem; 
+  onClose: () => void; 
+  onSubmit: (f: { type: UserFeedback['type'], comment: string }) => void;
+}> = ({ item, onClose, onSubmit }) => {
+  const [type, setType] = useState<UserFeedback['type']>('Wrong Regulation');
+  const [comment, setComment] = useState('');
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+      <div className="bg-white w-full max-w-md rounded-[2.5rem] p-8 shadow-2xl animate-in zoom-in duration-200">
+        <h3 className="text-xl font-black text-slate-900 mb-2">Report Audit Error</h3>
+        <p className="text-sm text-slate-500 mb-6">Help us improve the AI auditor for {item.productName}.</p>
+        
+        <div className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Error Type</label>
+            <select 
+              value={type} 
+              onChange={(e) => setType(e.target.value as UserFeedback['type'])}
+              className="w-full bg-slate-50 border border-slate-200 p-3 rounded-xl outline-none focus:ring-2 ring-indigo-500/20"
+            >
+              <option value="Incorrect Expiry">Incorrect Expiry</option>
+              <option value="Missed Allergen">Missed Allergen</option>
+              <option value="Wrong Regulation">Wrong Regulation</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Details</label>
+            <textarea 
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              placeholder="Explain what the AI missed..."
+              className="w-full bg-slate-50 border border-slate-200 p-3 rounded-xl h-24 outline-none focus:ring-2 ring-indigo-500/20 resize-none"
+            />
+          </div>
+        </div>
+
+        <div className="flex gap-3 mt-8">
+          <button onClick={onClose} className="flex-1 py-3 font-bold text-slate-500 hover:bg-slate-50 rounded-2xl transition-all">Cancel</button>
+          <button 
+            onClick={() => onSubmit({ type, comment })}
+            className="flex-1 py-3 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 shadow-xl shadow-indigo-200 transition-all"
+          >
+            Submit Feedback
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ComplianceDetail: React.FC<{ item: InventoryItem; onReport: () => void }> = ({ item, onReport }) => {
+  return (
+    <div className="p-4 sm:p-8 bg-slate-50 border-t border-slate-100 animate-in slide-in-from-top duration-300">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 sm:gap-10">
+        <div>
+          <div className="flex items-center justify-between mb-4 sm:mb-6">
+            <h4 className="text-[10px] sm:text-sm font-black text-slate-400 uppercase tracking-widest">Regional Regulation Audit</h4>
+            <span className="text-[10px] bg-indigo-600 text-white px-3 py-1 rounded-full font-black shadow-lg shadow-indigo-100">{item.detectedRegion}</span>
+          </div>
+          <div className="space-y-3 sm:space-y-4">
+            {item.detailedChecklist.map((check, idx) => (
+              <div key={idx} className="flex items-start gap-3 sm:gap-4 p-4 bg-white rounded-2xl border border-slate-200 shadow-sm hover:border-indigo-200 transition-colors">
+                <div className={`mt-1 flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center ${
+                  check.status === 'Passed' ? 'bg-emerald-100 text-emerald-600' : 
+                  check.status === 'Failed' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'
+                }`}>
+                  {check.status === 'Passed' ? (
+                    <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/></svg>
+                  ) : (
+                    <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd"/></svg>
+                  )}
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="font-black text-slate-800 text-sm tracking-tight">{check.requirement}</span>
+                    <span className="text-[10px] font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-500">{check.regulationId}</span>
+                  </div>
+                  <p className="text-xs text-slate-500 leading-relaxed">{check.details}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between mb-4 sm:mb-6">
+            <h4 className="text-[10px] sm:text-sm font-black text-slate-400 uppercase tracking-widest">Clinical Risk Profile</h4>
+            <span className="text-[9px] font-bold text-slate-400 uppercase">*Medical Audit</span>
+          </div>
+          <div className="space-y-3 sm:space-y-4">
+            {(['diabetes', 'bp', 'heart'] as const).map((key) => {
+              const data = item.healthSensitivity[key];
+              const label = key === 'bp' ? 'Hypertension' : key.charAt(0).toUpperCase() + key.slice(1);
+              const riskPercent = data.risk === 'High' ? 100 : data.risk === 'Medium' ? 50 : 15;
+              const riskColor = data.risk === 'High' ? 'bg-red-500' : data.risk === 'Medium' ? 'bg-amber-500' : 'bg-emerald-500';
+
+              return (
+                <div key={key} className="p-5 bg-white rounded-3xl border border-slate-200 shadow-sm relative overflow-hidden">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                       <span className={`w-2 h-2 rounded-full ${riskColor}`}></span>
+                       <span className="text-xs font-black text-slate-900 uppercase tracking-tight">{label}</span>
+                    </div>
+                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                      data.risk === 'High' ? 'bg-red-50 text-red-600' :
+                      data.risk === 'Medium' ? 'bg-amber-50 text-amber-600' :
+                      'bg-emerald-50 text-emerald-600'
+                    }`}>
+                      {data.risk}
+                    </span>
+                  </div>
+                  <div className="w-full h-1.5 bg-slate-100 rounded-full mb-3 overflow-hidden">
+                    <div className={`h-full transition-all duration-1000 ${riskColor}`} style={{ width: `${riskPercent}%` }}></div>
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-snug">{data.reason}</p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div>
+          <h4 className="text-[10px] sm:text-sm font-black text-slate-400 uppercase tracking-widest mb-4 sm:mb-6">AI Safety Profile</h4>
+          <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm relative overflow-hidden ring-1 ring-slate-100">
+            <div className="flex items-center gap-5 mb-6">
+              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-2xl font-black shadow-inner ${
+                item.safetyScore > 80 ? 'bg-emerald-50 text-emerald-600' : 
+                item.safetyScore > 50 ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600'
+              }`}>
+                {item.safetyScore}
+              </div>
+              <div className="flex-1">
+                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">AI Recommendation</div>
+                <div className="text-slate-900 font-bold leading-tight">{item.recommendation}</div>
+              </div>
+            </div>
+
+            <button 
+              onClick={onReport}
+              className="w-full py-3 border-2 border-dashed border-slate-200 text-slate-400 hover:border-indigo-300 hover:text-indigo-500 font-bold text-xs rounded-2xl transition-all flex items-center justify-center gap-2"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+              Report Audit Correction
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const App: React.FC = () => {
+  const [user, setUser] = useState<User | null>(null);
+  const [inventory, setInventory] = useState<InventoryItem[]>([]);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [feedbackItem, setFeedbackItem] = useState<InventoryItem | null>(null);
+
+  useEffect(() => {
+    const activeUser = sessionStorage.getItem('cs_session_active_user');
+    if (activeUser) {
+      const parsedUser = JSON.parse(activeUser);
+      setUser(parsedUser);
+      dbService.getInventory(parsedUser.id).then(items => setInventory(items));
+    }
+  }, []);
+
+  const handleLogin = (u: User) => {
+    setUser(u);
+    dbService.getInventory(u.id).then(items => setInventory(items));
+  };
+  
+  const handleLogout = () => {
+    setUser(null);
+    setInventory([]);
+    sessionStorage.removeItem('cs_session_active_user');
+  };
+
+  const downloadReport = () => {
+    if (inventory.length === 0) return;
+    try {
+      const doc = new jsPDF();
+      doc.setFontSize(22);
+      doc.text("ComplianceShield Audit Report", 14, 22);
+      doc.setFontSize(11);
+      doc.setTextColor(100);
+      doc.text(`Auditor: ${user?.phone}`, 14, 30);
+      doc.text(`Date: ${new Date().toLocaleDateString()}`, 14, 36);
+
+      const tableData = inventory.map(item => [
+        item.productName,
+        item.brand,
+        item.detectedRegion,
+        item.expiryDate || 'N/A',
+        `${item.healthSensitivity.diabetes.risk[0]}/${item.healthSensitivity.bp.risk[0]}/${item.healthSensitivity.heart.risk[0]}`,
+        `${item.safetyScore}%`,
+        item.isRegulatorilyCompliant ? "COMPLIANT" : "NON-COMPLIANT"
+      ]);
+
+      autoTable(doc, {
+        startY: 50,
+        head: [['Product', 'Brand', 'Region', 'Expiry', 'Health Risk (D/B/H)', 'Score', 'Compliance']],
+        body: tableData,
+        headStyles: { fillColor: [79, 70, 229], fontStyle: 'bold' },
+        margin: { top: 50 },
+        theme: 'striped'
+      });
+      doc.save(`Compliance_Report_${Date.now()}.pdf`);
+    } catch (err) {
+      alert("Could not generate report.");
+    }
+  };
+
+  const handleScan = async (base64: string) => {
+    if (!user) return;
+    setIsProcessing(true);
+    try {
+      const result = await analyzeProductImage(base64);
+      const newItem: InventoryItem = {
+        ...result,
+        id: 'aud_' + Math.random().toString(36).substr(2, 9),
+        addedAt: Date.now(),
+        imageUrl: `data:image/jpeg;base64,${base64}`
+      };
+      setInventory(prev => [newItem, ...prev]);
+      setShowScanner(false);
+      await dbService.saveItem(user.id, newItem);
+    } catch (error) {
+      alert("Audit Failed: Ensure the product label is clearly legible.");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const submitFeedback = async (f: { type: UserFeedback['type'], comment: string }) => {
+    if (!feedbackItem || !user) return;
+    const feedback: UserFeedback = {
+      id: 'fb_' + Math.random().toString(36).substr(2, 9),
+      itemId: feedbackItem.id,
+      type: f.type,
+      comment: f.comment,
+      submittedAt: Date.now()
+    };
+    await dbService.submitFeedback(user.id, feedback);
+    setInventory(prev => prev.map(item => 
+      item.id === feedbackItem.id ? { ...item, feedbackSubmitted: true } : item
+    ));
+    setFeedbackItem(null);
+    alert("Audit Correction Logged.");
+  };
+
+  const deleteItem = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!user) return;
+    await dbService.deleteItem(user.id, id);
+    setInventory(prev => prev.filter(item => item.id !== id));
+  };
+
+  if (!user) return <Auth onLogin={handleLogin} />;
+
+  const stats: DashboardStats = {
+    totalItems: inventory.length,
+    expiredCount: inventory.filter(i => i.isExpired).length,
+    riskyCount: inventory.filter(i => i.riskyIngredients.length > 0).length,
+    regulatoryIssuesCount: inventory.filter(i => !i.isRegulatorilyCompliant).length,
+    averageSafetyScore: inventory.length > 0 
+      ? inventory.reduce((acc, curr) => acc + curr.safetyScore, 0) / inventory.length 
+      : 0
+  };
+
+  const getRiskUI = (key: 'diabetes' | 'bp' | 'heart', risk: string) => {
+    const icon = key === 'diabetes' ? (
+      <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5L12 2 8 9.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"/></svg>
+    ) : key === 'bp' ? (
+      <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M12 2v20M2 12h20"/><circle cx="12" cy="12" r="10"/></svg>
+    ) : (
+      <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l8.78-8.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+    );
+
+    let colorClass = 'bg-emerald-50 text-emerald-600 border-emerald-100/50';
+    if (risk === 'High') colorClass = 'bg-red-50 text-red-600 border-red-200/50';
+    if (risk === 'Medium') colorClass = 'bg-amber-50 text-amber-700 border-amber-200/50';
+
+    return (
+      <div key={key} className={`flex items-center gap-1 px-1.5 py-0.5 rounded-lg border font-black text-[8px] tracking-tight ${colorClass}`}>
+        <div className="shrink-0">{icon}</div>
+        <span>{key === 'diabetes' ? 'DIA' : key === 'bp' ? 'BP' : 'HRT'}: {risk}</span>
+      </div>
+    );
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 pb-32">
+      <nav className="sticky top-0 z-[60] bg-white border-b border-slate-200 shadow-sm px-4 py-3">
+        <div className="max-w-7xl mx-auto flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-lg rotate-3">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>
+              </svg>
+            </div>
+            <div>
+              <h1 className="text-sm font-black text-slate-900 leading-none">ComplianceShield</h1>
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">{user.phone}</span>
+            </div>
+          </div>
+          <button onClick={handleLogout} className="p-2 text-slate-300 hover:text-red-500 transition-colors">
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+          </button>
+        </div>
+      </nav>
+
+      <main className="max-w-7xl mx-auto px-4 py-8">
+        <div className="mb-8">
+          <h2 className="text-3xl font-black text-slate-900 tracking-tight leading-none mb-2">Inventory <span className="text-indigo-600">Audit</span></h2>
+          <p className="text-slate-500 text-xs font-medium">Production mobile compliance infrastructure.</p>
+        </div>
+
+        {showScanner ? (
+          <div className="mb-10 animate-in zoom-in duration-300">
+            <Scanner onScan={handleScan} isProcessing={isProcessing} />
+            <button onClick={() => setShowScanner(false)} className="w-full mt-4 text-xs font-bold text-slate-400">Cancel Scan</button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3 mb-10">
+            <button onClick={() => setShowScanner(true)} className="col-span-2 bg-indigo-600 text-white font-black py-5 rounded-3xl shadow-xl flex items-center justify-center gap-3">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Scan Product
+            </button>
+            <button onClick={downloadReport} className="bg-white border border-slate-200 text-slate-600 font-bold py-4 rounded-3xl text-xs">Export Report</button>
+            <div className="bg-indigo-50 border border-indigo-100 rounded-3xl flex items-center justify-center text-indigo-600 font-black text-sm">{inventory.length} SKUs</div>
+          </div>
+        )}
+
+        <Dashboard stats={stats} />
+
+        <div className="space-y-4">
+          {inventory.length === 0 ? (
+            <div className="text-center py-20 bg-white rounded-[2.5rem] border border-slate-100 border-dashed">
+              <p className="text-slate-400 font-black text-xs uppercase tracking-widest">No Active Audits</p>
+            </div>
+          ) : (
+            inventory.map((item) => (
+              <div key={item.id} className="bg-white rounded-[2rem] shadow-sm border border-slate-100 overflow-hidden">
+                <div onClick={() => setExpandedId(expandedId === item.id ? null : item.id)} className="p-4 flex items-start gap-4 cursor-pointer hover:bg-slate-50 transition-colors">
+                  <img src={item.imageUrl} className="w-20 h-20 rounded-2xl object-cover border border-slate-100 shadow-sm" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex justify-between items-start mb-1">
+                      <h3 className="font-black text-slate-900 text-sm truncate pr-2">{item.productName}</h3>
+                      <span className={`text-[10px] font-black shrink-0 ${item.safetyScore > 80 ? 'text-emerald-500' : 'text-amber-500'}`}>{item.safetyScore}%</span>
+                    </div>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter mb-2">{item.brand} • {item.detectedRegion}</p>
+                    
+                    {/* RESTORED: Expiry and Ingredients in Collapsed View */}
+                    <div className="flex flex-col gap-2 mb-3">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ring-1 ${item.isExpired ? 'bg-red-600 text-white ring-red-700' : 'bg-emerald-50 text-emerald-600 ring-emerald-100'}`}>
+                          {item.expiryDate || 'N/A'}
+                        </span>
+                        <span className="text-[9px] font-bold text-slate-300 uppercase tracking-widest">{item.targetAudience}</span>
+                      </div>
+                      
+                      <div className="flex flex-wrap gap-1">
+                        {item.ingredients.slice(0, 3).map((ing, i) => (
+                          <span key={i} className={`text-[8px] font-bold px-1.5 py-0.5 rounded border ${
+                            item.riskyIngredients.some(ri => ri.name.toLowerCase() === ing.toLowerCase())
+                              ? 'bg-amber-100 border-amber-300 text-amber-700'
+                              : 'bg-slate-50 border-slate-100 text-slate-400'
+                          }`}>{ing}</span>
+                        ))}
+                        {item.ingredients.length > 3 && <span className="text-[8px] font-bold text-slate-300">+{item.ingredients.length - 3}</span>}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1">
+                      {(['diabetes', 'bp', 'heart'] as const).map(key => getRiskUI(key, item.healthSensitivity[key].risk))}
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-center justify-between self-stretch py-1">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center ${item.isRegulatorilyCompliant ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
+                      {item.isRegulatorilyCompliant ? <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor"><path d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"/></svg> : <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor"><path d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"/></svg>}
+                    </div>
+                    <button onClick={(e) => deleteItem(item.id, e)} className="text-slate-200 hover:text-red-500 transition-colors"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button>
+                  </div>
+                </div>
+                {expandedId === item.id && (
+                  <ComplianceDetail item={item} onReport={() => setFeedbackItem(item)} />
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      </main>
+
+      {feedbackItem && (
+        <FeedbackModal item={feedbackItem} onClose={() => setFeedbackItem(null)} onSubmit={submitFeedback} />
+      )}
+    </div>
+  );
+};
+
+export default App;

@@ -1,0 +1,7 @@
+{
+  "name": "ComplianceShield",
+  "description": "An AI-powered safety and compliance auditor for inventory. Scans product labels to detect expired items and harmful ingredients for various demographics using autonomous category recognition.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
