@@ -240,8 +240,14 @@ const App: React.FC = () => {
       setInventory(prev => [newItem, ...prev]);
       setShowScanner(false);
       await dbService.saveItem(user.id, newItem);
-    } catch (error) {
-      alert("Audit Failed: Ensure the product label is clearly legible.");
+    } catch (error: any) {
+      console.error("Full Error Object:", error);
+  
+  if (error.message?.includes("SAFETY")) {
+    alert("Safety Block: Please rephrase your request to be less medical.");
+  } else {
+    alert("Audit Failed: Ensure the product label is clearly legible.");
+  }
     } finally {
       setIsProcessing(false);
     }
